@@ -39,68 +39,69 @@ BEGIN {
 PROCESS {
 
 
-    foreach ($Vm in $ComputerName) {
+    foreach ($vm in $ComputerName) {
 
         $i=0
+
+        Write-Verbose $vm
            
         try {
 
-            $disks = Get-VM $Vm | Get-HardDisk -DiskType "RawPhysical","RawVirtual"
-            
-            $logtopart = Get-WmiObject -Class Win32_LogicalDiskToPartition -computername $Vm
-            
-            $disktopart = Get-WmiObject Win32_DiskDriveToDiskPartition -computername $Vm
-            
-            $logical = Get-WmiObject win32_logicaldisk -computername $Vm
-            
-            $volume = Get-WmiObject win32_volume -computername $Vm
-            
-            $partition = Get-WmiObject win32_diskpartition -computername $Vm        
+            $vmObj = Get-VM $vm
 
-            if (($VmView = Get-View -ViewType VirtualMachine -Filter @{"Name" = $Vm})) {
-                
-                $WinDisks = Get-WmiObject -Class Win32_DiskDrive -ComputerName $VmView.Name
+            $hostname = $vmObj.Guest.HostName
 
-                foreach ($VirtualSCSIController in ($VMView.Config.Hardware.Device | where {$_.DeviceInfo.Label -match "SCSI Controller"})) {
-                    
-                    foreach ($VirtualDiskDevice in ($VMView.Config.Hardware.Device | where {$_.ControllerKey -eq $VirtualSCSIController.Key})) {
+            $disks = $vmObj | Get-HardDisk -DiskType "RawPhysical","RawVirtual"
+            
+            $logtopart = Get-WmiObject -Class Win32_LogicalDiskToPartition -computername $hostname
+            
+            $disktopart = Get-WmiObject Win32_DiskDriveToDiskPartition -computername $hostname
+            
+            $logical = Get-WmiObject win32_logicaldisk -computername $hostname
+            
+            $volume = Get-WmiObject win32_volume -computername $hostname
+            
+            $partition = Get-WmiObject win32_diskpartition -computername $hostname        
 
-                        $VirtualDisk = "" | Select ComputerName, SCSIController, DiskName, SCSI_Id, DiskFile, DiskSize, WindowsDisk, NAA, Drive, VolumeName, Error
-                        $VirtualDisk.ComputerName = $Vm
-                        $VirtualDisk.SCSIController = $VirtualSCSIController.DeviceInfo.Label
-                        $VirtualDisk.DiskName = $VirtualDiskDevice.DeviceInfo.Label
-                        $VirtualDisk.SCSI_Id = "$($VirtualSCSIController.BusNumber) : $($VirtualDiskDevice.UnitNumber)"
-                        $VirtualDisk.DiskFile = $VirtualDiskDevice.Backing.FileName
-                        $VirtualDisk.DiskSize = $VirtualDiskDevice.CapacityInKB * 1KB / 1GB
-                        $VirtualDisk.NAA = $disks | ? {$_.name -like $VirtualDiskDevice.DeviceInfo.Label} | select -expand scsicanonicalname
-                        $VirtualDisk.Error = ""
- 
-                        # Match disks based on SCSI ID
-                        $DiskMatch = $WinDisks | ?{($_.SCSIPort -2 ) -eq $VirtualSCSIController.BusNumber -and $_.SCSITargetID -eq $VirtualDiskDevice.UnitNumber}
-                        
-                        if ($DiskMatch){
-                            $VirtualDisk.WindowsDisk = "Disk $($DiskMatch.Index)"
-                            $i++
-                        } else {
-                            throw  [Exception]"No matching Windows disk found for SCSI id $($VirtualDisk.SCSI_Id)"
-                        }
-             
-                        $matchdisktopar = $disktopart|Where {$_.Antecedent -eq $diskmatch.__Path}
-                        $matchlogtopart = $logtopart| Where {$_.Antecedent -eq $matchdisktopar.Dependent}
-                        $logicalmatch = $logical| where {$_.path.path -eq $matchlogtopart.dependent}
-                        $VirtualDisk.volumename = $logicalmatch.volumename
-                        $VirtualDisk.drive = $logicalmatch.deviceid
- 
- 
-                        $VirtualDisk
-                    }
-                }
-            } else {
-                throw [Exception]"VM $Vm Not Found"
-            }
+			$WinDisks = Get-WmiObject -Class Win32_DiskDrive -ComputerName $hostname
+
+			foreach ($VirtualSCSIController in ($vmObj.ExtensionData.Config.Hardware.Device | where { $_.DeviceInfo.Label -match "SCSI Controller" })) {
+				
+				foreach ($VirtualDiskDevice in ($vmObj.ExtensionData.Config.Hardware.Device | where { $_.ControllerKey -eq $VirtualSCSIController.Key })) {
+
+					$VirtualDisk = "" | Select ComputerName, SCSIController, DiskName, SCSI_Id, DiskFile, DiskSize, WindowsDisk, NAA, Drive, VolumeName, Error
+					$VirtualDisk.ComputerName = $hostname
+					$VirtualDisk.SCSIController = $VirtualSCSIController.DeviceInfo.Label
+					$VirtualDisk.DiskName = $VirtualDiskDevice.DeviceInfo.Label
+					$VirtualDisk.SCSI_Id = "$($VirtualSCSIController.BusNumber) : $($VirtualDiskDevice.UnitNumber)"
+					$VirtualDisk.DiskFile = $VirtualDiskDevice.Backing.FileName
+					$VirtualDisk.DiskSize = $VirtualDiskDevice.CapacityInKB * 1KB / 1GB
+					$VirtualDisk.NAA = $disks | ? { $_.name -like $VirtualDiskDevice.DeviceInfo.Label } | select -expand scsicanonicalname
+					$VirtualDisk.Error = ""
+
+					# Match disks based on SCSI ID
+					$DiskMatch = $WinDisks | ?{($_.SCSIPort -2 ) -eq $VirtualSCSIController.BusNumber -and $_.SCSITargetID -eq $VirtualDiskDevice.UnitNumber}
+					
+					if ($DiskMatch){
+						$VirtualDisk.WindowsDisk = "Disk $($DiskMatch.Index)"
+						$i++
+					} else {
+						throw  [Exception]"No matching Windows disk found for SCSI id $($VirtualDisk.SCSI_Id)"
+					}
+		 
+					$matchdisktopar = $disktopart | Where { $_.Antecedent -eq $diskmatch.__Path }
+					$matchlogtopart = $logtopart | Where { $_.Antecedent -eq $matchdisktopar.Dependent }
+					$logicalmatch = $logical | where {$_.path.path -eq $matchlogtopart.dependent }
+					$VirtualDisk.volumename = $logicalmatch.volumename
+					$VirtualDisk.drive = $logicalmatch.deviceid
+
+					$VirtualDisk
+				}
+			}
+
         } catch [Exception] {
             $VirtualDisk = "" | Select ComputerName, SCSIController, DiskName, SCSI_Id, DiskFile, DiskSize, WindowsDisk, NAA, Drive, VolumeName, Error
-            $VirtualDisk.Computername = $Vm
+            $VirtualDisk.Computername = $vm
             $VirtualDisk.Error = $_.Exception.Message
             $VirtualDisk
         }
